@@ -17,6 +17,7 @@ mod task;
 use crate::config::MAX_APP_NUM;
 use crate::loader::{get_num_app, init_app_cx};
 use crate::sync::UPSafeCell;
+use alloc::collections::btree_map::BTreeMap;
 use lazy_static::*;
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
@@ -39,12 +40,50 @@ pub struct TaskManager {
     inner: UPSafeCell<TaskManagerInner>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Trace identifier, used by tracing calling time of each syscall in each task
+pub struct TraceId {
+    /// id of task
+    pub task_id: usize,
+    /// id of syscall
+    pub syscall_id: usize,
+}
+
+impl PartialOrd for TraceId {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        if self.task_id == other.task_id {
+            self.syscall_id.partial_cmp(&other.syscall_id)
+        } else {
+            self.task_id.partial_cmp(&other.task_id)
+        }
+    }
+}
+
+impl Ord for TraceId {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        if self.task_id == other.task_id {
+            self.syscall_id.cmp(&other.syscall_id)
+        } else {
+            self.task_id.cmp(&other.task_id)
+        }
+    }
+}
+
+impl TraceId {
+    /// Create a new TraceId
+    pub fn new(task_id: usize, syscall_id: usize) -> Self {
+        Self { task_id, syscall_id }
+    }
+}
+
 /// Inner of Task Manager
 pub struct TaskManagerInner {
     /// task list
     tasks: [TaskControlBlock; MAX_APP_NUM],
     /// id of current `Running` task
     current_task: usize,
+    /// trace counter
+    traces: BTreeMap<TraceId, usize>,
 }
 
 lazy_static! {
@@ -65,6 +104,7 @@ lazy_static! {
                 UPSafeCell::new(TaskManagerInner {
                     tasks,
                     current_task: 0,
+                    traces: BTreeMap::new(),
                 })
             },
         }
@@ -168,4 +208,23 @@ pub fn suspend_current_and_run_next() {
 pub fn exit_current_and_run_next() {
     mark_current_exited();
     run_next_task();
+}
+
+/// Get the id of current task.
+pub fn current_task_id() -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    inner.current_task
+}
+
+/// Get the trace count of a specific TraceId
+pub fn get_trace_count(trace_id: TraceId) -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    *inner.traces.get(&trace_id).unwrap_or(&0)
+}
+
+/// Increase the trace count of a specific TraceId by 1
+pub fn increase_trace_count(trace_id: TraceId) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let counter = inner.traces.entry(trace_id).or_insert(0);
+    *counter += 1;
 }
