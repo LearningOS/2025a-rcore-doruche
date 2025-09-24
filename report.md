@@ -8,7 +8,7 @@
 在`syscall()`函数入口处调用`increase_trace_count()`即可。
 
 ### 问题回答
-- TODO
+- 控制流直接trap进入异常处理并打印报错信息，接着对应用户程序被kill。报错信息分别是PageFault，IllegalInstruction*2。sbi为rustsbi-qemu 0.2.0-alpha.2。
 - - 刚进入`__restore`时，`sp`仍然指向目前的内核栈。`__restore`的作用是恢复用户态的寄存器状态，并切换到用户栈。它被用在寻常的系统调用/时钟中断返回与首次创建的用户任务的返回。
   - `sstatus`, `sepc`, `sscratch`被特殊处理了。具体来说，我们需要设置`sstatus`的`SPP`为u-mode，`sepc`为用户态被中断（或往后一条指令）的地址，`sscratch`指向此前的内核栈，以便于正常切入用户态以及下次回到内核态。
 - `x2`是`sp`，此时控制流尚在内核栈上，并且我们需要`sp`来访问被压入的`TrapFrame`，因此我们在最后从`sscratch`取回用户栈指针，再存入`x2`。`x4`是`tp`，用户应用不会使用它，因此我们目前不需要保存和恢复它。
