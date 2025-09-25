@@ -22,6 +22,21 @@ const SYSCALL_SBRK: usize = 214;
 const SYSCALL_MUNMAP: usize = 215;
 /// mmap syscall
 const SYSCALL_MMAP: usize = 222;
+
+bitflags! {
+    /// Memory protection flags, used in `mmap` syscall
+    pub struct ProtFlags: usize {
+        /// No permissions
+        const PROT_NONE  = 0;
+        /// Pages can be read
+        const PROT_READ  = 1 << 0;
+        /// Pages can be written
+        const PROT_WRITE = 1 << 1;
+        /// Pages can be executed
+        const PROT_EXEC  = 1 << 2;
+    }
+}
+
 /// trace syscall
 const SYSCALL_TRACE: usize = 410;
 
@@ -31,8 +46,12 @@ mod process;
 use fs::*;
 use process::*;
 
+use crate::task::trace_increase_count;
+
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 3]) -> isize {
+    trace_increase_count(syscall_id);
+
     match syscall_id {
         SYSCALL_WRITE => sys_write(args[0], args[1] as *const u8, args[2]),
         SYSCALL_EXIT => sys_exit(args[0] as i32),

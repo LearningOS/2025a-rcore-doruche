@@ -15,6 +15,7 @@ mod switch;
 mod task;
 
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{MapArea, VirtPageNum};
 use crate::sync::UPSafeCell;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
@@ -201,4 +202,35 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// Get certain syscall counts for current task
+pub fn trace_syscall_count(syscall_id: usize) -> usize {
+    let inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;
+    *inner.tasks[cur].tracer.get(&syscall_id).unwrap_or(&0)
+}
+
+/// Increase certain syscall counts for current task
+pub fn trace_increase_count(syscall_id: usize) {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;
+    let count = inner.tasks[cur].tracer.entry(syscall_id).or_insert(0);
+    *count += 1;
+}
+
+/// Map a new area for current task
+pub fn map_area(area: MapArea) -> Result<(), ()> {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;
+    let task = &mut inner.tasks[cur];
+    task.memory_set.try_push(area, None)
+}
+
+/// Unmap an area for current task
+pub fn munmap(svpn: VirtPageNum, npages: usize) -> Result<(), ()> {
+    let mut inner = TASK_MANAGER.inner.exclusive_access();
+    let cur = inner.current_task;
+    let task = &mut inner.tasks[cur];
+    task.memory_set.try_munmap(svpn, npages)
 }
