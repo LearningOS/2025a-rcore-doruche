@@ -40,11 +40,14 @@ pub fn suspend_current_and_run_next() {
     // There must be an application running.
     let task = take_current_task().unwrap();
 
+    let pass = task.pass();
     // ---- access current TCB exclusively
     let mut task_inner = task.inner_exclusive_access();
     let task_cx_ptr = &mut task_inner.task_cx as *mut TaskContext;
     // Change status to Ready
     task_inner.task_status = TaskStatus::Ready;
+    task_inner.stride += pass;
+
     drop(task_inner);
     // ---- release current PCB
 
@@ -55,7 +58,8 @@ pub fn suspend_current_and_run_next() {
 }
 
 /// pid of usertests app in make run TEST=1
-pub const IDLE_PID: usize = 0;
+pub const INIT_PID: usize = 0;
+//pub const IDLE_PID: usize = 0;
 
 /// Exit the current 'Running' task and run the next task in task list.
 pub fn exit_current_and_run_next(exit_code: i32) {
@@ -63,9 +67,9 @@ pub fn exit_current_and_run_next(exit_code: i32) {
     let task = take_current_task().unwrap();
 
     let pid = task.getpid();
-    if pid == IDLE_PID {
+    if pid == INIT_PID {
         println!(
-            "[kernel] Idle process exit with exit_code {} ...",
+            "[kernel] Init process exit with exit_code {} ...",
             exit_code
         );
         panic!("All applications completed!");

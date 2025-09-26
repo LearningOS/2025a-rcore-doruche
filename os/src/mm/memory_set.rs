@@ -301,6 +301,62 @@ impl MemorySet {
             false
         }
     }
+
+    fn is_already_mapped(
+        &self,
+        vpn: VirtPageNum,
+    ) -> bool {
+        for area in self.areas.iter() {
+            if area.contains(vpn) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Try to add a new MapArea into this MemorySet.
+    /// Return Err(()) if there is any conflict in the virtual address
+    /// space.
+    pub fn try_push(
+        &mut self,
+        mut map_area: MapArea,
+        data: Option<&[u8]>,
+    ) -> Result<(), ()> {
+        for vpn in map_area.vpn_range {
+            if self.is_already_mapped(vpn) {
+                return Err(());
+            }
+        }
+        map_area.map(&mut self.page_table);
+        if let Some(data) = data {
+            map_area.copy_data(&mut self.page_table, data);
+        }
+        self.areas.push(map_area);
+        Ok(())
+    }
+
+    /// Try to unmap a range of virtual pages.
+    /// Return Err(()) if any page in the range is not mapped.
+    /// Used by munmap syscall.
+    pub fn try_munmap(
+        &mut self,
+        svpn: VirtPageNum,
+        npages: usize,
+    ) -> Result<(), ()> {
+        let mut vpn = svpn;
+        for _ in 0..npages {
+            if let Some(area) = self
+                .areas
+                .iter_mut()
+                .find(|area| area.contains(vpn)) {
+                area.unmap_one(&mut self.page_table, vpn);
+            } else {
+                return Err(());
+            }
+            vpn.step();
+        }
+        Ok(())
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
@@ -311,6 +367,7 @@ pub struct MapArea {
 }
 
 impl MapArea {
+    /// Create a new MapArea.
     pub fn new(
         start_va: VirtAddr,
         end_va: VirtAddr,
@@ -326,6 +383,8 @@ impl MapArea {
             map_perm,
         }
     }
+    /// Create a new MapArea by copying another one, but without data frames.
+    /// Used in fork.
     pub fn from_another(another: &Self) -> Self {
         Self {
             vpn_range: VPNRange::new(another.vpn_range.get_start(), another.vpn_range.get_end()),
@@ -334,7 +393,7 @@ impl MapArea {
             map_perm: another.map_perm,
         }
     }
-    pub fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+    fn map_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         let ppn: PhysPageNum;
         match self.map_type {
             MapType::Identical => {
@@ -349,23 +408,26 @@ impl MapArea {
         let pte_flags = PTEFlags::from_bits(self.map_perm.bits).unwrap();
         page_table.map(vpn, ppn, pte_flags);
     }
-    pub fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
+    fn unmap_one(&mut self, page_table: &mut PageTable, vpn: VirtPageNum) {
         if self.map_type == MapType::Framed {
             self.data_frames.remove(&vpn);
         }
         page_table.unmap(vpn);
     }
+    /// map all pages in this area
     pub fn map(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.map_one(page_table, vpn);
         }
     }
+    /// unmap all pages in this area
     pub fn unmap(&mut self, page_table: &mut PageTable) {
         for vpn in self.vpn_range {
             self.unmap_one(page_table, vpn);
         }
     }
     #[allow(unused)]
+    /// shrink the area to new_end
     pub fn shrink_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(new_end, self.vpn_range.get_end()) {
             self.unmap_one(page_table, vpn)
@@ -373,6 +435,7 @@ impl MapArea {
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
     }
     #[allow(unused)]
+    /// append the area to new_end
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
         for vpn in VPNRange::new(self.vpn_range.get_end(), new_end) {
             self.map_one(page_table, vpn)
@@ -401,12 +464,28 @@ impl MapArea {
             current_vpn.step();
         }
     }
+
+    /// Check whether a virtual page number is in this area
+    pub fn contains(&self, vpn: VirtPageNum) -> bool {
+        match self.map_type {
+            MapType::Identical => {
+                if vpn.0 >= self.vpn_range.get_start().0 && vpn.0 < self.vpn_range.get_end().0 {
+                    true
+                } else {
+                    false
+                }
+            }
+            MapType::Framed => self.data_frames.contains_key(&vpn),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 /// map type for memory set: identical or framed
 pub enum MapType {
+    /// virtual page number equals physical page number
     Identical,
+    /// virtual page mapped to a frame allocated from frame allocator
     Framed,
 }
 

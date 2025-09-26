@@ -6,7 +6,7 @@ use alloc::sync::Arc;
 use lazy_static::*;
 ///A array of `TaskControlBlock` that is thread-safe
 pub struct TaskManager {
-    ready_queue: VecDeque<Arc<TaskControlBlock>>,
+    pub(super) ready_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
 /// A simple FIFO scheduler.
@@ -23,7 +23,16 @@ impl TaskManager {
     }
     /// Take a process out of the ready queue
     pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
-        self.ready_queue.pop_front()
+        let task_idx = self.ready_queue
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, t)| t.get_stride())
+            .map(|(i, _)| i);
+        if let Some(i) = task_idx {
+            Some(self.ready_queue.remove(i).unwrap())
+        } else {
+            None
+        }
     }
 }
 
