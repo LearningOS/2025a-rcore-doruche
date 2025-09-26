@@ -1,13 +1,13 @@
 //! Process management syscalls
+use core::mem::size_of;
+
 use alloc::sync::Arc;
 
 use crate::{
-    loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
-    task::{
+    loader::get_app_data_by_name, mm::{translated_byte_buffer, translated_refmut, translated_str, MapArea, MapType, VirtAddr}, syscall::ProtFlags, task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next,
-    },
+    }, timer::get_time_us
 };
 
 #[repr(C)]
@@ -105,21 +105,79 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time",
         current_task().unwrap().pid.0
     );
-    -1
+    
+    let usec = get_time_us();
+    let sec = usec / 1_000_000;
+    let usec = usec % 1_000_000;
+    let timeval = TimeVal { sec, usec };
+
+    let mut buffers = translated_byte_buffer(
+        current_user_token(), 
+        ts as *const u8, 
+        size_of::<TimeVal>(),
+    );
+    match buffers.len() {
+        1 => {
+            let buffer = buffers.get_mut(0).unwrap().as_mut();
+            let buffer = &mut unsafe {
+                core::mem::transmute::<&mut [u8], &mut [TimeVal]>(buffer)
+            }[0];
+            *buffer = timeval;
+        },
+        2 => {
+            let timeval_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    &timeval as *const TimeVal as *const u8, 
+                    size_of::<TimeVal>()
+                )
+            };
+            let buffer1 = buffers.get_mut(0).unwrap().as_mut();
+            let split = buffer1.len();
+            buffer1.copy_from_slice(&timeval_bytes[0..split]);
+            let buffer2 = buffers.get_mut(1).unwrap().as_mut();
+            buffer2.copy_from_slice(&timeval_bytes[split..]);
+        },
+        _ => unreachable!(),
+    }
+    
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if len == 0 {
+        return 0;
+    }
+    if start % 4096 != 0 {
+        return -1;
+    }
+    if prot & 0b111 == 0 || prot & !0b111 != 0 {
+        return -1;
+    }
+
+    let prot = ProtFlags::from_bits_truncate(prot);
+    
+    let svpn_aligned = VirtAddr::from(start).floor();
+    let evpn_aligned = VirtAddr::from(start + len).ceil();
+    let area = MapArea::new(
+        svpn_aligned.into(),
+        evpn_aligned.into(),
+        MapType::Framed,
+        prot.into(),
+    );
+    match map_area(area) {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
 }
 
 /// YOUR JOB: Implement munmap.

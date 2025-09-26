@@ -41,6 +41,20 @@ const SYSCALL_SPAWN: usize = 400;
 mod fs;
 mod process;
 
+bitflags! {
+    /// Memory protection flags, used in `mmap` syscall
+    pub struct ProtFlags: usize {
+        /// No permissions
+        const PROT_NONE  = 0;
+        /// Pages can be read
+        const PROT_READ  = 1 << 0;
+        /// Pages can be written
+        const PROT_WRITE = 1 << 1;
+        /// Pages can be executed
+        const PROT_EXEC  = 1 << 2;
+    }
+}
+
 use fs::*;
 use process::*;
 /// handle syscall exception with `syscall_id` and other arguments

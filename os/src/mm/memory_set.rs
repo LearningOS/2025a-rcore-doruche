@@ -5,6 +5,7 @@ use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
 use crate::config::{MEMORY_END, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_STACK_SIZE};
 use crate::sync::UPSafeCell;
+use crate::syscall::ProtFlags;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -420,6 +421,24 @@ bitflags! {
         const X = 1 << 3;
         ///Accessible in U mode
         const U = 1 << 4;
+    }
+}
+
+impl From<ProtFlags> for MapPermission {
+    fn from(value: ProtFlags) -> Self {
+        let mut perm = Self::empty();
+        // on default, prot is used by mmap, thus a user permission is added
+        perm |= MapPermission::U;
+        if value.contains(ProtFlags::PROT_READ) {
+            perm |= MapPermission::R;
+        }
+        if value.contains(ProtFlags::PROT_WRITE) {
+            perm |= MapPermission::W;
+        }
+        if value.contains(ProtFlags::PROT_EXEC) {
+            perm |= MapPermission::X;
+        }
+        perm
     }
 }
 
