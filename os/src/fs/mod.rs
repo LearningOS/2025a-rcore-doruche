@@ -3,10 +3,12 @@
 mod inode;
 mod stdio;
 
+use core::any::Any;
+
 use crate::mm::UserBuffer;
 
 /// trait File for all file types
-pub trait File: Send + Sync {
+pub trait File: Send + Sync + Any {
     /// the file readable?
     fn readable(&self) -> bool;
     /// the file writable?
@@ -46,5 +48,5 @@ bitflags! {
     }
 }
 
-pub use inode::{list_apps, open_file, OSInode, OpenFlags};
+pub use inode::{list_apps, open_file, link, unlink, OSInode, OpenFlags};
 pub use stdio::{Stdin, Stdout};

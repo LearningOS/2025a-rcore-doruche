@@ -1,14 +1,14 @@
 //! Process management syscalls
 //!
+use core::mem::size_of;
+
 use alloc::sync::Arc;
 
 use crate::{
-    fs::{open_file, OpenFlags},
-    mm::{translated_refmut, translated_str},
-    task::{
+    config::PAGE_SIZE, fs::{open_file, OpenFlags}, mm::{translated_byte_buffer, translated_refmut, translated_str, MapArea, MapType, VirtAddr}, syscall::{write_small_data, ProtFlags}, task::{
         add_task, current_task, current_user_token, exit_current_and_run_next,
         suspend_current_and_run_next,
-    },
+    }, timer::get_time_us
 };
 
 #[repr(C)]
@@ -105,30 +105,79 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time",
         current_task().unwrap().pid.0
     );
-    -1
+    
+    let usec = get_time_us();
+    let sec = usec / 1_000_000;
+    let usec = usec % 1_000_000;
+    let timeval = TimeVal { sec, usec };
+
+    write_small_data(ts, timeval);
+
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
+pub fn sys_mmap(start: usize, len: usize, prot: usize) -> isize {
     trace!(
         "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
         current_task().unwrap().pid.0
     );
-    -1
+    if len == 0 {
+        return 0;
+    }
+    if start % 4096 != 0 {
+        return -1;
+    }
+    if prot & 0b111 == 0 || prot & !0b111 != 0 {
+        return -1;
+    }
+
+    let prot = ProtFlags::from_bits_truncate(prot);
+    
+    let svpn_aligned = VirtAddr::from(start).floor();
+    let evpn_aligned = VirtAddr::from(start + len).ceil();
+    let area = MapArea::new(
+        svpn_aligned.into(),
+        evpn_aligned.into(),
+        MapType::Framed,
+        prot.into(),
+    );
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    
+    match inner.memory_set.try_push(area, None) {
+        Ok(()) => 0,
+        Err(()) => -1,
+    }
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
+pub fn sys_munmap(start: usize, len: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_munmap",
         current_task().unwrap().pid.0
     );
-    -1
+    if len == 0 {
+        return 0;
+    }
+    if start % 4096 != 0 {
+        return -1;
+    }
+
+    let svpn = VirtAddr::from(start).floor();
+    let npages = (len + PAGE_SIZE - 1) / PAGE_SIZE;
+    
+    let task = current_task().unwrap();
+    let mut inner = task.inner_exclusive_access();
+    match inner.memory_set.try_munmap(svpn, npages) {
+        Ok(()) => 0,
+        Err(()) => -1,
+    }
 }
 
 /// change data segment size
@@ -143,19 +192,36 @@ pub fn sys_sbrk(size: i32) -> isize {
 
 /// YOUR JOB: Implement spawn.
 /// HINT: fork + exec =/= spawn
-pub fn sys_spawn(_path: *const u8) -> isize {
+pub fn sys_spawn(path: *const u8) -> isize {
     trace!(
-        "kernel:pid[{}] sys_spawn NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_spawn",
         current_task().unwrap().pid.0
-    );
-    -1
+    ); 
+    let token = current_user_token();
+    let path = translated_str(token, path);
+    if let Some(app_inode) = open_file(&path, OpenFlags::RDONLY) {
+        let all_data = app_inode.read_all();
+        let task = current_task().unwrap();
+        let new_task = task.spawn(all_data.as_slice());
+        let new_pid = new_task.pid.0;
+        add_task(new_task);
+        new_pid as isize
+    } else {
+        -1
+    } 
 }
 
 // YOUR JOB: Set task priority.
-pub fn sys_set_priority(_prio: isize) -> isize {
+pub fn sys_set_priority(prio: isize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_set_priority NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_set_priority",
         current_task().unwrap().pid.0
     );
-    -1
+    
+    if prio < 2 {
+        return -1;
+    }
+    current_task().unwrap().set_priority(prio as usize);
+
+    prio   
 }

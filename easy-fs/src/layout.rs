@@ -85,6 +85,7 @@ pub struct DiskInode {
     pub direct: [u32; INODE_DIRECT_COUNT],
     pub indirect1: u32,
     pub indirect2: u32,
+    pub nlink: u16,
     type_: DiskInodeType,
 }
 
@@ -96,6 +97,7 @@ impl DiskInode {
         self.direct.iter_mut().for_each(|v| *v = 0);
         self.indirect1 = 0;
         self.indirect2 = 0;
+        self.nlink = 0; // set by caller
         self.type_ = type_;
     }
     /// Whether this inode is a directory
@@ -405,6 +407,11 @@ impl DirEntry {
             inode_id: 0,
         }
     }
+    
+    pub fn is_empty(&self) -> bool {
+        self.inode_id == 0
+    }
+    
     /// Crate a directory entry from name and inode number
     pub fn new(name: &str, inode_id: u32) -> Self {
         let mut bytes = [0u8; NAME_LENGTH_LIMIT + 1];

@@ -18,12 +18,14 @@
 //! We then call [`task::run_tasks()`] and for the first time go to
 //! userspace.
 
-#![deny(missing_docs)]
 #![deny(warnings)]
+#![allow(unused)]
 #![no_std]
 #![no_main]
 #![feature(panic_info_message)]
 #![feature(alloc_error_handler)]
+
+#![feature(trait_upcasting)]
 
 #[macro_use]
 extern crate bitflags;

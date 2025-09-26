@@ -5,6 +5,7 @@ use super::{PhysAddr, PhysPageNum, VirtAddr, VirtPageNum};
 use super::{StepByOne, VPNRange};
 use crate::config::{MEMORY_END, MMIO, PAGE_SIZE, TRAMPOLINE, TRAP_CONTEXT_BASE, USER_STACK_SIZE};
 use crate::sync::UPSafeCell;
+use crate::syscall::ProtFlags;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -318,6 +319,62 @@ impl MemorySet {
             false
         }
     }
+
+    fn is_already_mapped(
+        &self,
+        vpn: VirtPageNum,
+    ) -> bool {
+        for area in self.areas.iter() {
+            if area.contains(vpn) {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Try to add a new MapArea into this MemorySet.
+    /// Return Err(()) if there is any conflict in the virtual address
+    /// space.
+    pub fn try_push(
+        &mut self,
+        mut map_area: MapArea,
+        data: Option<&[u8]>,
+    ) -> Result<(), ()> {
+        for vpn in map_area.vpn_range {
+            if self.is_already_mapped(vpn) {
+                return Err(());
+            }
+        }
+        map_area.map(&mut self.page_table);
+        if let Some(data) = data {
+            map_area.copy_data(&mut self.page_table, data);
+        }
+        self.areas.push(map_area);
+        Ok(())
+    }
+
+    /// Try to unmap a range of virtual pages.
+    /// Return Err(()) if any page in the range is not mapped.
+    /// Used by munmap syscall.
+    pub fn try_munmap(
+        &mut self,
+        svpn: VirtPageNum,
+        npages: usize,
+    ) -> Result<(), ()> {
+        let mut vpn = svpn;
+        for _ in 0..npages {
+            if let Some(area) = self
+                .areas
+                .iter_mut()
+                .find(|area| area.contains(vpn)) {
+                area.unmap_one(&mut self.page_table, vpn);
+            } else {
+                return Err(());
+            }
+            vpn.step();
+        }
+        Ok(())
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
@@ -418,6 +475,19 @@ impl MapArea {
             current_vpn.step();
         }
     }
+    /// Check whether a virtual page number is in this area
+    pub fn contains(&self, vpn: VirtPageNum) -> bool {
+        match self.map_type {
+            MapType::Identical => {
+                if vpn.0 >= self.vpn_range.get_start().0 && vpn.0 < self.vpn_range.get_end().0 {
+                    true
+                } else {
+                    false
+                }
+            }
+            MapType::Framed => self.data_frames.contains_key(&vpn),
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Debug)]
@@ -440,6 +510,25 @@ bitflags! {
         const U = 1 << 4;
     }
 }
+
+impl From<ProtFlags> for MapPermission {
+    fn from(value: ProtFlags) -> Self {
+        let mut perm = Self::empty();
+        // on default, prot is used by mmap, thus a user permission is added
+        perm |= MapPermission::U;
+        if value.contains(ProtFlags::PROT_READ) {
+            perm |= MapPermission::R;
+        }
+        if value.contains(ProtFlags::PROT_WRITE) {
+            perm |= MapPermission::W;
+        }
+        if value.contains(ProtFlags::PROT_EXEC) {
+            perm |= MapPermission::X;
+        }
+        perm
+    }
+}
+
 
 /// remap test in kernel space
 #[allow(unused)]
