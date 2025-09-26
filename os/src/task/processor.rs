@@ -8,7 +8,6 @@ use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
 use crate::sync::UPSafeCell;
-use crate::task::manager::TASK_MANAGER;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
