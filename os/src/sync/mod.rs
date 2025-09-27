@@ -6,6 +6,6 @@ mod semaphore;
 mod up;
 
 pub use condvar::Condvar;
-pub use mutex::{Mutex, MutexBlocking, MutexSpin};
-pub use semaphore::Semaphore;
+pub use mutex::{Mutex, MutexBlocking, MutexSpin, DeadlockDetector as MutexDeadlockDetector};
+pub use semaphore::{Semaphore, DeadlockDetector as SemDeadlockDetector};
 pub use up::UPSafeCell;

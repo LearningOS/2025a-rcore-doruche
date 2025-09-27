@@ -43,6 +43,7 @@ fn set_kernel_trap_entry() {
         stvec::write(__trap_from_kernel as usize, TrapMode::Direct);
     }
 }
+
 /// set trap entry for traps happen in user mode
 fn set_user_trap_entry() {
     unsafe {

@@ -7,18 +7,25 @@ use super::{add_task, SignalFlags};
 use super::{pid_alloc, PidHandle};
 use crate::fs::{File, Stdin, Stdout};
 use crate::mm::{translated_refmut, MemorySet, KERNEL_SPACE};
-use crate::sync::{Condvar, Mutex, Semaphore, UPSafeCell};
+use crate::sync::{Condvar, Mutex, MutexDeadlockDetector, SemDeadlockDetector, Semaphore, UPSafeCell};
 use crate::trap::{trap_handler, TrapContext};
+use alloc::collections::btree_map::BTreeMap;
+use alloc::collections::btree_set::BTreeSet;
 use alloc::string::String;
 use alloc::sync::{Arc, Weak};
 use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefMut;
+use core::sync::atomic::AtomicBool;
 
 /// Process Control Block
 pub struct ProcessControlBlock {
     /// immutable
     pub pid: PidHandle,
+
+    /// set once
+    deadlock_detect_ena: AtomicBool,
+
     /// mutable
     inner: UPSafeCell<ProcessControlBlockInner>,
 }
@@ -45,10 +52,26 @@ pub struct ProcessControlBlockInner {
     pub task_res_allocator: RecycleAllocator,
     /// mutex list
     pub mutex_list: Vec<Option<Arc<dyn Mutex>>>,
+    /// mutex deadlock detector
+    pub mutex_detector: MutexDeadlockDetector,
+
     /// semaphore list
     pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
+    /// semaphore deadlock detector
+    pub sem_detector: SemDeadlockDetector,
+
     /// condvar list
     pub condvar_list: Vec<Option<Arc<Condvar>>>,
+}
+
+impl ProcessControlBlockInner {
+    pub fn mutex_allocated(&self) -> usize {
+        self.mutex_list.iter().filter(|m| m.is_some()).count()
+    }
+
+    pub fn semaphore_allocated(&self) -> usize {
+        self.semaphore_list.iter().filter(|s| s.is_some()).count()
+    }
 }
 
 impl ProcessControlBlockInner {
@@ -85,6 +108,14 @@ impl ProcessControlBlockInner {
 }
 
 impl ProcessControlBlock {
+    pub fn deadlock_detect_ena(&self) -> bool {
+        self.deadlock_detect_ena.load(core::sync::atomic::Ordering::Relaxed)
+    }
+
+    pub fn set_deadlock_detect(&self, enabled: bool) {
+        self.deadlock_detect_ena.store(enabled, core::sync::atomic::Ordering::Relaxed);
+    }
+
     /// inner_exclusive_access
     pub fn inner_exclusive_access(&self) -> RefMut<'_, ProcessControlBlockInner> {
         self.inner.exclusive_access()
@@ -98,6 +129,7 @@ impl ProcessControlBlock {
         let pid_handle = pid_alloc();
         let process = Arc::new(Self {
             pid: pid_handle,
+            deadlock_detect_ena: AtomicBool::new(false),
             inner: unsafe {
                 UPSafeCell::new(ProcessControlBlockInner {
                     is_zombie: false,
@@ -117,7 +149,9 @@ impl ProcessControlBlock {
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
                     mutex_list: Vec::new(),
+                    mutex_detector: MutexDeadlockDetector::new(),
                     semaphore_list: Vec::new(),
+                    sem_detector: SemDeadlockDetector::new(),
                     condvar_list: Vec::new(),
                 })
             },
@@ -231,6 +265,7 @@ impl ProcessControlBlock {
         // create child process pcb
         let child = Arc::new(Self {
             pid,
+            deadlock_detect_ena: AtomicBool::new(self.deadlock_detect_ena.load(core::sync::atomic::Ordering::Relaxed)),
             inner: unsafe {
                 UPSafeCell::new(ProcessControlBlockInner {
                     is_zombie: false,
@@ -243,7 +278,9 @@ impl ProcessControlBlock {
                     tasks: Vec::new(),
                     task_res_allocator: RecycleAllocator::new(),
                     mutex_list: Vec::new(),
+                    mutex_detector: MutexDeadlockDetector::new(),
                     semaphore_list: Vec::new(),
+                    sem_detector: SemDeadlockDetector::new(),
                     condvar_list: Vec::new(),
                 })
             },

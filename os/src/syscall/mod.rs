@@ -104,12 +104,14 @@ mod process;
 mod sync;
 mod thread;
 
+use core::mem::size_of;
+
 use fs::*;
 use process::*;
 use sync::*;
 use thread::*;
 
-use crate::fs::Stat;
+use crate::{config::PAGE_SIZE, fs::Stat, mm::translated_byte_buffer, task::current_user_token};
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
@@ -150,5 +152,42 @@ pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
         SYSCALL_CONDVAR_WAIT => sys_condvar_wait(args[0], args[1]),
         SYSCALL_KILL => sys_kill(args[0], args[1] as u32),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
+    }
+}
+
+
+/// dst pointer may span across pages, so we need to handle it carefully
+pub fn write_small_data<T>(dst: *mut T, src: T) {
+    assert!(size_of::<T>() < PAGE_SIZE * 2);
+
+    let mut buffers = translated_byte_buffer(
+        current_user_token(), 
+        dst as *const u8, 
+        size_of::<T>(),
+    );
+    
+    match buffers.len() {
+        1 => {
+            let buffer = buffers.get_mut(0).unwrap().as_mut();
+            let buffer = &mut unsafe {
+                core::mem::transmute::<&mut [u8], &mut [T]>(buffer)
+            }[0];
+            *buffer = src;
+        },
+        2 => {
+            let src_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    &src as *const T as *const u8,
+                    size_of::<T>()
+                )
+            };
+            
+            let buffer1 = buffers.get_mut(0).unwrap().as_mut();
+            let split = buffer1.len();
+            buffer1.copy_from_slice(&src_bytes[0..split]);
+            let buffer2 = buffers.get_mut(1).unwrap().as_mut();
+            buffer2.copy_from_slice(&src_bytes[split..]);
+        },
+        _ => unreachable!(),
     }
 }

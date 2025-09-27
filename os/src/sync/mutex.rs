@@ -4,6 +4,9 @@ use super::UPSafeCell;
 use crate::task::TaskControlBlock;
 use crate::task::{block_current_and_run_next, suspend_current_and_run_next};
 use crate::task::{current_task, wakeup_task};
+use alloc::collections::btree_map::BTreeMap;
+use alloc::collections::btree_set::BTreeSet;
+use alloc::vec;
 use alloc::{collections::VecDeque, sync::Arc};
 
 /// Mutex trait
@@ -101,5 +104,69 @@ impl Mutex for MutexBlocking {
         } else {
             mutex_inner.locked = false;
         }
+    }
+}
+
+
+/// must be limited in each process
+pub struct DeadlockDetector {
+    /// lock_id -> thread_id
+    lock_holders: BTreeMap<usize, usize>,
+    /// thread_id -> lock_id
+    wait_requests: BTreeMap<usize, usize>,
+}
+
+impl DeadlockDetector {
+    pub fn new() -> Self {
+        Self {
+            lock_holders: BTreeMap::new(),
+            wait_requests: BTreeMap::new(),
+        }
+    }
+
+    pub fn add_lock_holder(&mut self, lock_id: usize, thread_id: usize) {
+        self.lock_holders.insert(lock_id, thread_id);
+    }
+
+    pub fn remove_lock_holder(&mut self, lock_id: usize) {
+        self.lock_holders.remove(&lock_id);
+    }
+
+    pub fn add_wait_request(&mut self, thread_id: usize, lock_id: usize) {
+        self.wait_requests.insert(thread_id, lock_id);
+    }
+
+    pub fn remove_wait_request(&mut self, thread_id: usize) {
+        self.wait_requests.remove(&thread_id);
+    }
+
+    pub fn get_holder(&self, lock_id: usize) -> Option<usize> {
+        self.lock_holders.get(&lock_id).cloned()
+    }
+
+    pub fn is_holded(&self, lock_id: usize) -> bool {
+        self.lock_holders.contains_key(&lock_id)
+    }
+
+    pub fn detect_cycle(
+        &self,
+        waiter_tid: usize,
+        holder_tid: usize,
+    ) -> bool {
+        // dfs
+        let mut visited = BTreeSet::new();
+        let mut to_visit = vec![waiter_tid];
+        while let Some(tid) = to_visit.pop() {
+            if visited.contains(&tid) {
+                return true;
+            }
+            visited.insert(tid);
+            if let Some(lock_id) = self.wait_requests.get(&tid) {
+                if let Some(next_tid) = self.lock_holders.get(lock_id) {
+                    to_visit.push(*next_tid);
+                }
+            }
+        }
+        false
     }
 }

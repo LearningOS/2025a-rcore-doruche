@@ -1,10 +1,8 @@
 use crate::{
-    fs::{open_file, OpenFlags},
-    mm::{translated_ref, translated_refmut, translated_str},
-    task::{
+    fs::{open_file, OpenFlags}, mm::{translated_ref, translated_refmut, translated_str}, syscall::write_small_data, task::{
         current_process, current_task, current_user_token, exit_current_and_run_next, pid2process,
         suspend_current_and_run_next, SignalFlags,
-    },
+    }, timer::get_time_us
 };
 use alloc::{string::String, sync::Arc, vec::Vec};
 
@@ -23,6 +21,15 @@ pub fn sys_exit(exit_code: i32) -> ! {
         "kernel:pid[{}] sys_exit",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
+
+    // let task = current_task().unwrap();
+    // let tid = task.inner_exclusive_access().res.as_ref().unwrap().tid;
+    // let process = task.process.upgrade().unwrap();
+    // let mut process_inner = process.inner_exclusive_access();
+    // process_inner.sem_detector.alloc.remove(&tid);
+    // assert!(process_inner.sem_detector.req.remove(&tid).is_none());
+    // drop(process_inner);
+
     exit_current_and_run_next(exit_code);
     panic!("Unreachable in sys_exit!");
 }
@@ -151,12 +158,20 @@ pub fn sys_kill(pid: usize, signal: u32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
     trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
+        "kernel:pid[{}] sys_get_time",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
-    -1
+
+    let usec = get_time_us();
+    let sec = usec / 1_000_000;
+    let usec = usec % 1_000_000;
+    let timeval = TimeVal { sec, usec };
+
+    write_small_data(ts, timeval);
+
+    0
 }
 
 /// mmap syscall

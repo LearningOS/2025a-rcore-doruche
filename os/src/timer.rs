@@ -78,6 +78,11 @@ pub fn add_timer(expire_ms: usize, task: Arc<TaskControlBlock>) {
         "kernel:pid[{}] add_timer",
         current_task().unwrap().process.upgrade().unwrap().getpid()
     );
+    println!(
+        "kernel: add_timer for task {}, expire at {} ms",
+        task.inner_exclusive_access().res.as_ref().unwrap().tid,
+        expire_ms
+    );
     let mut timers = TIMERS.exclusive_access();
     timers.push(TimerCondVar { expire_ms, task });
 }
@@ -109,6 +114,8 @@ pub fn check_timer() {
     while let Some(timer) = timers.peek() {
         if timer.expire_ms <= current_ms {
             wakeup_task(Arc::clone(&timer.task));
+            let tid = timer.task.inner_exclusive_access().res.as_ref().unwrap().tid;
+            trace!("kernel: wakeup task {}", tid);
             timers.pop();
         } else {
             break;
